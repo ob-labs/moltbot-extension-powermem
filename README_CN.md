@@ -1,0 +1,265 @@
+# Moltbot Memory (PowerMem) 插件
+
+本插件让 [Moltbot](https://github.com/moltbot/moltbot) 通过 [PowerMem](https://github.com/oceanbase/powermem) 的 HTTP API 使用长期记忆：智能抽取、艾宾浩斯遗忘曲线、多 Agent 隔离。**Moltbot 里不跑 Python**，只需一个单独运行的 PowerMem 服务。
+
+下面按顺序做即可：先装 PowerMem 并启动服务，再装插件、改配置，最后验证。
+
+---
+
+## 前置条件
+
+- 已安装 **Moltbot**（CLI + gateway 能正常用）
+- **PowerMem 服务**：需要单独安装并启动（见下文两种方式，任选其一）
+- 若用 PowerMem 的「智能抽取」：需在 PowerMem 的 `.env` 里配置好 LLM + Embedding 的 API Key（如通义千问 / OpenAI）
+
+---
+
+## 第一步：安装并启动 PowerMem
+
+任选 **方式 A（pip）** 或 **方式 B（Docker）**，二选一即可。
+
+### 方式 A：用 pip 安装（本机跑服务）
+
+适合本机已有 Python 3.10+ 的情况。
+
+**1. 安装 PowerMem**
+
+```bash
+pip install powermem
+```
+
+**2. 准备配置文件**
+
+在**任意一个你打算放配置的目录**下执行（例如 `~/powermem`）：
+
+```bash
+mkdir -p ~/powermem && cd ~/powermem
+# 从 PowerMem 官方仓库复制模板（若未克隆仓库，见下方「最小 .env 示例」）
+# 若已克隆：cp /path/to/powermem/.env.example .env
+```
+
+若没有克隆 PowerMem 仓库，可以直接新建 `.env`，**最少**需要配置这三类（数据库 + LLM + Embedding）。下面是一个**最小可运行示例**（SQLite + 通义千问，请换成你自己的 API Key）：
+
+```bash
+# 在 ~/powermem 目录下创建 .env，内容示例（请替换 your_api_key_here）
+cat > .env << 'EOF'
+TIMEZONE=Asia/Shanghai
+DATABASE_PROVIDER=sqlite
+SQLITE_PATH=./data/powermem_dev.db
+SQLITE_COLLECTION=memories
+
+LLM_PROVIDER=qwen
+LLM_API_KEY=your_api_key_here
+LLM_MODEL=qwen-plus
+
+EMBEDDING_PROVIDER=qwen
+EMBEDDING_API_KEY=your_api_key_here
+EMBEDDING_MODEL=text-embedding-v4
+EMBEDDING_DIMS=1536
+EOF
+```
+
+把上面的 `your_api_key_here` 换成你的通义千问 API Key。若用 OpenAI 等，请参考 PowerMem 官方 [.env.example](https://github.com/oceanbase/powermem/blob/master/.env.example) 修改 `LLM_*` 和 `EMBEDDING_*`。
+
+**3. 启动 HTTP 服务**
+
+**务必在放有 `.env` 的那个目录下**执行：
+
+```bash
+cd ~/powermem   # 或你放 .env 的目录
+powermem-server --host 0.0.0.0 --port 8000
+```
+
+看到类似 `Uvicorn running on http://0.0.0.0:8000` 即表示成功。保持该终端不关。
+
+**4. 验证 PowerMem 是否正常**
+
+新开一个终端执行：
+
+```bash
+curl -s http://localhost:8000/api/v1/system/health
+```
+
+若返回 JSON（例如包含 `"status":"healthy"` 或类似字段），说明 PowerMem 已就绪。
+
+---
+
+### 方式 B：用 Docker 运行（不装 Python 也行）
+
+适合本机有 Docker、不想装 Python 的情况。
+
+**1. 克隆 PowerMem 仓库并准备 .env**
+
+```bash
+git clone https://github.com/oceanbase/powermem.git
+cd powermem
+cp .env.example .env
+```
+
+用编辑器打开 `.env`，**至少**填好：
+
+- `LLM_API_KEY`、`LLM_PROVIDER`、`LLM_MODEL`
+- `EMBEDDING_API_KEY`、`EMBEDDING_PROVIDER`、`EMBEDDING_MODEL`
+
+数据库可保持默认（SQLite），无需改。
+
+**2. 启动容器**
+
+在 **powermem 项目根目录**（和 `.env` 同级）执行：
+
+```bash
+docker-compose -f docker/docker-compose.yml up -d
+```
+
+**3. 验证**
+
+```bash
+curl -s http://localhost:8000/api/v1/system/health
+```
+
+有 JSON 返回即表示服务正常。API 文档可浏览器打开：`http://localhost:8000/docs`。
+
+---
+
+## 第二步：把本插件装进 Moltbot
+
+在**你本机**执行（路径改成你实际克隆的目录）：
+
+```bash
+# 若插件在本机目录（例如克隆下来的）
+moltbot plugins install /path/to/moltbot-extension-powermem
+
+# 开发时想改代码即生效，可用链接方式（不拷贝）
+moltbot plugins install -l /path/to/moltbot-extension-powermem
+```
+
+安装成功后，可用 `moltbot plugins list` 确认能看到 `memory-powermem`。
+
+---
+
+## 第三步：配置 Moltbot 使用本插件
+
+编辑 Moltbot 的配置文件（常见位置：`~/.clawdbot/config.json` 或项目里的 `moltbot.json`），在 **根级** 增加或合并 `plugins` 段，并把记忆槽指向本插件，并写上 PowerMem 的地址。
+
+**示例（JSON）：**
+
+```json
+{
+  "plugins": {
+    "slots": { "memory": "memory-powermem" },
+    "entries": {
+      "memory-powermem": {
+        "enabled": true,
+        "config": {
+          "baseUrl": "http://localhost:8000",
+          "autoCapture": true,
+          "autoRecall": true,
+          "inferOnAdd": true
+        }
+      }
+    }
+  }
+}
+```
+
+说明：
+
+- `baseUrl`：PowerMem 的 HTTP 地址，**不要**加 `/api/v1`，就写 `http://localhost:8000` 或你的实际主机/端口。
+- 若 PowerMem 开了 API Key 鉴权，在 `config` 里增加 `"apiKey": "你的key"`。
+- 改完配置后**重启 Moltbot gateway**（或重启 Mac 菜单栏应用），配置才会生效。
+
+---
+
+## 第四步：验证插件与 PowerMem 连通
+
+在终端执行：
+
+```bash
+# 检查 PowerMem 服务是否可达
+moltbot ltm health
+```
+
+若输出里没有报错、能看到健康状态，说明插件已连上 PowerMem。
+
+再试一条手动写入 + 搜索：
+
+```bash
+# 写入一条记忆
+moltbot ltm add "我的偏好是每天早上喝一杯美式咖啡"
+
+# 按内容搜索
+moltbot ltm search "咖啡"
+```
+
+若搜索能返回刚写的那条（或类似内容），说明「安装 PowerMem → 安装插件 → 配置 Moltbot」全流程已打通。
+
+---
+
+## 配置项说明（可选）
+
+| 选项          | 必填 | 说明 |
+|---------------|------|------|
+| `baseUrl`     | 是   | PowerMem API 根地址，如 `http://localhost:8000`，不要带 `/api/v1`。 |
+| `apiKey`      | 否   | PowerMem 开启 API Key 鉴权时填写。 |
+| `userId`      | 否   | 用于多用户隔离，默认 `moltbot-user`。 |
+| `agentId`     | 否   | 用于多 Agent 隔离，默认 `moltbot-agent`。 |
+| `autoCapture` | 否   | 会话结束后是否自动把对话交给 PowerMem 抽取记忆，默认 `true`。 |
+| `autoRecall`  | 否   | 会话开始前是否自动注入相关记忆，默认 `true`。 |
+| `inferOnAdd`  | 否   | 写入时是否用 PowerMem 智能抽取，默认 `true`。 |
+
+**自动抓取**：会话结束时，会把本轮用户/助手文本发给 PowerMem（`infer: true`），由 PowerMem 抽取并落库。每轮最多 3 条，每条约 6000 字符以内。
+
+---
+
+## Agent 内工具
+
+在 Moltbot Agent 里会暴露这些能力：
+
+- **memory_recall** — 按查询搜索长期记忆
+- **memory_store** — 写入一条记忆（可选是否智能抽取）
+- **memory_forget** — 按记忆 ID 或按搜索条件删除
+
+---
+
+## Moltbot CLI 命令（插件启用后）
+
+- `moltbot ltm search <query> [--limit n]` — 搜索记忆
+- `moltbot ltm health` — 检查 PowerMem 服务健康
+- `moltbot ltm add "<text>"` — 手动写入一条记忆
+
+---
+
+## 常见问题
+
+**1. `moltbot ltm health` 报错连不上**
+
+- 确认 PowerMem 已启动（方式 A 的终端还在跑，或 Docker 容器在运行）。
+- 确认 `baseUrl` 与真实地址一致（本机用 `http://localhost:8000`，别写 `127.0.0.1` 除非你确定一致）。
+- 若 Moltbot 和 PowerMem 不在同一台机器，把 `localhost` 改成 PowerMem 所在机器的 IP 或域名。
+
+**2. 写入/搜索没反应或报 500**
+
+- 看 PowerMem 终端或 Docker 日志，多半是 LLM/Embedding 未配置或 API Key 错误。
+- 确保 `.env` 里 `LLM_API_KEY`、`EMBEDDING_API_KEY` 已填且有效。
+
+**3. 插件已安装但 Moltbot 没用上记忆**
+
+- 确认配置里 `plugins.slots.memory` 为 `memory-powermem`，且 `plugins.entries["memory-powermem"].enabled` 为 `true`。
+- 改完配置后必须重启 gateway（或 Moltbot 应用）。
+
+---
+
+## 本仓库开发命令
+
+```bash
+cd /path/to/moltbot-extension-powermem
+pnpm install
+pnpm lint   # 类型检查
+pnpm test   # 运行测试（若有）
+```
+
+---
+
+## 许可证
+
+Apache License 2.0，见 [LICENSE](LICENSE)。

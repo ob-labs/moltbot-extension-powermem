@@ -1,0 +1,38 @@
+{
+  "name": "moltbot-extension-powermem",
+  "version": "1.0.0",
+  "description": "Moltbot plugin: long-term memory via PowerMem HTTP API (intelligent extraction, Ebbinghaus forgetting curve).",
+  "type": "module",
+  "main": "index.ts",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "files": [
+    "index.ts",
+    "config.ts",
+    "client.ts",
+    "moltbot.plugin.json"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@sinclair/typebox": "^0.34.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "vitest": "^2.0.0"
+  },
+  "peerDependencies": {
+    "moltbot": ">=2026.1.0"
+  },
+  "peerDependenciesMeta": {
+    "moltbot": { "optional": true }
+  },
+  "moltbot": {
+    "extensions": ["./index.ts"]
+  },
+  "repository": "",
+  "license": "Apache-2.0"
+}
